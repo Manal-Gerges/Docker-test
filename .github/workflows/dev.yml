@@ -1,0 +1,80 @@
+name: Dev Branch CI
+
+on:
+  push:
+    branches: [ "dev" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Isolated temporary PostgreSQL service for testing
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ci_testing_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_secure_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+
+    steps:
+    # 1. Checkout the repository code
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # 2. Setup PHP 8.3 with required extensions
+    - name: Setup PHP 8.3
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.3'
+        extensions: mbstring, dom, fileinfo, pdo_pgsql, pgsql, redis
+        coverage: none
+
+    # 3. Install composer dependencies for testing
+    - name: Install Dependencies
+      run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+
+    # 4. Prepare environment configuration using the example file
+    - name: Prepare Environment File
+      run: cp .env.example .env
+
+    # 5. Generate application encryption key
+    - name: Generate Application Key
+      run: php artisan key:generate
+
+    # 6. Run database migrations and feature/unit tests
+    - name: Run Tests
+      env:
+        DB_CONNECTION: pgsql
+        DB_HOST: 127.0.0.1
+        DB_PORT: 5432
+        DB_DATABASE: ci_testing_db
+        DB_USERNAME: postgres
+        DB_PASSWORD: ci_secure_password
+      run: php artisan test
+
+  # 7. Automatically merge dev into test branch if tests pass successfully
+  auto-merge:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge Dev to Test
+        uses: haltingstate/github-action-merge-pull-request@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          source_branch: "dev"
+          destination_branch: "test"
+          type: "merge"
